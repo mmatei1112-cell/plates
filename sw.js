@@ -1,9 +1,9 @@
 /* Plates service worker: network first (so updates show up straight away), cache as offline fallback */
-const CACHE = 'plates-1.0.1';
+const CACHE = 'plates-1.0.1-flat';
 const SHELL = [
   './', 'index.html', 'app.js?v=1.0.1', 'data.js?v=1.0.1', 'manifest.webmanifest',
-  'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
-  'fonts/big-shoulders-display-latin-wght-normal.woff2', 'fonts/big-shoulders-display-latin-ext-wght-normal.woff2'
+  'icon-180.png', 'icon-192.png', 'icon-512.png',
+  'big-shoulders-display-latin-wght-normal.woff2', 'big-shoulders-display-latin-ext-wght-normal.woff2'
 ];
 
 self.addEventListener('install', e => {
