@@ -1,7 +1,7 @@
 /* Plates — gym + meal tracker with a coach. Single-user, data stays on the phone. */
 'use strict';
 
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.2.2';
 const STORE_KEY = 'plates.v1';
 
 /* ---------- Error banner: show any crash instead of failing silently ---------- */
@@ -1045,6 +1045,7 @@ function aiSetupHTML(where) {
   if (key) {
     return `${provSeg}<div class="group mt"><div class="row"><div class="grow"><div class="title">${P.name} key saved</div><div class="meta">Ends in …${esc(key.slice(-4))}. Stored only on this phone.</div></div>
       <button class="btn sm ghost danger" data-a="aiRemoveKey" data-where="${where}">Remove</button></div></div>
+      <div class="mt">${aiTestHTML()}<p class="small" data-aitest style="margin:8px 2px 0" aria-live="polite"></p></div>
       <div class="field"><span>Model</span>${models}</div>`;
   }
   const steps = c.provider === 'gemini'
@@ -1072,6 +1073,29 @@ function aiSetupHTML(where) {
       <p class="small muted" style="margin:10px 2px 0">${privacy}</p>
     </div>`;
 }
+/* Quick check that the saved key works, without using a photo */
+async function aiTest() {
+  const c = aiCfg(), t0 = Date.now();
+  const secs = () => ((Date.now() - t0) / 1000).toFixed(1);
+  try {
+    if (c.provider === 'gemini') {
+      const res = await aiFetch(`https://generativelanguage.googleapis.com/v1beta/models/${PROVIDERS.gemini.models[c.gmodel].id}`, { headers: { 'x-goog-api-key': c.gkey } }, 20000);
+      let data = null; try { data = await res.json(); } catch (e) { /* ignore */ }
+      if (res.ok) return { ok: true, text: `Your key works. Google answered in ${secs()} s.` };
+      const e = geminiHttpError(res, data);
+      if (e instanceof QuotaError) return { ok: res.status !== 404, text: res.status === 404 ? 'Your key works, but this model isn’t available to it. Pick the other model above.' : 'Your key works, but today’s free limit is used up.', detail: e.detail };
+      return { ok: false, text: e.message, detail: e.detail };
+    }
+    const res = await aiFetch('https://api.anthropic.com/v1/models', { headers: { 'x-api-key': c.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' } }, 20000);
+    let data = null; try { data = await res.json(); } catch (e) { /* ignore */ }
+    if (res.ok) return { ok: true, text: `Your key works. Claude answered in ${secs()} s.` };
+    const msg = (data && data.error && data.error.message) || '';
+    return { ok: false, text: res.status === 401 ? 'Claude didn’t accept this key. Create a new one and save it here.' : `Claude returned an error (${res.status}).`, detail: `HTTP ${res.status}${msg ? ': ' + msg : ''}` };
+  } catch (e) {
+    return { ok: false, text: e instanceof NetError ? `Couldn’t connect to ${aiName()} at all. Check that other websites open, and turn off any VPN or ad blocker for a moment.` : e.message, detail: e.detail || '' };
+  }
+}
+function aiTestHTML() { return `<button class="btn ghost wide" data-a="aiTest">Test key</button>`; }
 function refreshAiSetup(where) {
   if (where === 'photo' && ui.food && ui.food.mode === 'photo') { renderFood(); return; }
   const box = $('[data-aisetup]'); if (box) box.innerHTML = aiSetupHTML('settings');
@@ -1156,12 +1180,15 @@ function geminiResetTime() {
   } catch (e) { /* fall through */ }
   return null;
 }
-async function aiFetch(url, opts) {
-  const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 60000);
+function aiErr(msg, detail) { const e = new Error(msg); e.detail = detail || ''; return e; }
+class NetError extends Error { constructor(msg, detail) { super(msg); this.detail = detail; } }
+async function aiFetch(url, opts, ms = 60000) {
+  const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), ms);
   try { return await fetch(url, { ...opts, signal: ctrl.signal }); }
   catch (e) {
-    if (e.name === 'AbortError') throw new Error(`${aiName()} took too long to answer. Try again.`);
-    throw new Error(navigator.onLine === false ? 'You’re offline. Photo logging needs an internet connection.' : `Couldn’t reach ${aiName()}. Check your connection and try again.`);
+    if (e.name === 'AbortError') throw aiErr(`${aiName()} took too long to answer. Try again, or pick Flash-Lite in Settings for faster answers.`, `No answer after ${Math.round(ms / 1000)} seconds`);
+    if (navigator.onLine === false) throw aiErr('You’re offline. Photo logging needs an internet connection.', `${e.name}: ${e.message}`);
+    throw new NetError(`Couldn’t connect to ${aiName()}.`, `${e.name}: ${e.message}`);
   } finally { clearTimeout(timer); }
 }
 async function claudeCall(c, list, b64, hint) {
@@ -1195,8 +1222,23 @@ async function claudeCall(c, list, b64, hint) {
   return block.input;
 }
 class QuotaError extends Error {}
-async function geminiCall(c, list, b64, hint, modelKey) {
+function geminiHttpError(res, data) {
+  const err = (data && data.error) || {}, msg = err.message || '', st = err.status || '';
+  const reasons = JSON.stringify(err.details || []);
+  const detail = `HTTP ${res.status}${st ? ' ' + st : ''}${msg ? ': ' + msg : ''}`.slice(0, 300);
+  if (/API_KEY_INVALID|API key not valid|API key expired/i.test(msg + reasons)) return aiErr('Google didn’t accept your Gemini API key. It may have been mistyped or deleted. Add a new one in Settings, under Photo logging.', detail);
+  if (res.status === 401 || st === 'UNAUTHENTICATED' || /ACCESS_TOKEN_TYPE_UNSUPPORTED/.test(reasons)) return aiErr('Google refused this key. Some new AQ. keys from AI Studio have this problem on Google’s side. Create a new key in AI Studio (in a new project if it offers one) and save it in Settings, or switch to Claude there.', detail);
+  if (/location is not supported/i.test(msg)) return aiErr('Google doesn’t offer the Gemini API where you are right now.', detail);
+  if (res.status === 429 || st === 'RESOURCE_EXHAUSTED') { const q = new QuotaError(msg); q.detail = detail; return q; }
+  if (res.status === 403) return aiErr('This key can’t use the Gemini API. Create a new key at aistudio.google.com/apikey and save it in Settings.', detail);
+  if (res.status === 404) { const q = new QuotaError('model not found'); q.detail = detail; return q; }   // try the other model
+  if (res.status >= 500) return aiErr('Gemini is busy right now. Try again in a moment.', detail);
+  return aiErr(`Gemini returned an error (${res.status}).`, detail);
+}
+async function geminiCall(c, list, b64, hint, modelKey, think = true) {
   const model = PROVIDERS.gemini.models[modelKey].id;
+  const gen = { responseMimeType: 'application/json', responseSchema: GEMINI_SCHEMA, temperature: 0.2 };
+  if (think && modelKey === 'best') gen.thinkingConfig = { thinkingLevel: 'low' };   // Flash thinks at "medium" by default; "low" answers faster
   const res = await aiFetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': c.gkey },
@@ -1206,46 +1248,44 @@ async function geminiCall(c, list, b64, hint, modelKey) {
         { inlineData: { mimeType: 'image/jpeg', data: b64 } },
         { text: 'What food is in this photo, and how much?' + (hint ? `\nDetails from me: ${hint}` : '') }
       ] }],
-      generationConfig: { responseMimeType: 'application/json', responseSchema: GEMINI_SCHEMA, temperature: 0.2 }
+      generationConfig: gen
     })
   });
   let data = null; try { data = await res.json(); } catch (e) { /* not JSON */ }
   if (!res.ok) {
-    const err = (data && data.error) || {}, msg = err.message || '', st = err.status || '';
-    const reasons = JSON.stringify(err.details || []);
-    if (/API_KEY_INVALID|API key not valid|API key expired/i.test(msg + reasons)) throw new Error('Google didn’t accept your Gemini API key. It may have been mistyped or deleted. Add a new one in Settings, under Photo logging.');
-    if (/location is not supported/i.test(msg)) throw new Error('Google doesn’t offer the Gemini API where you are right now.');
-    if (res.status === 429 || st === 'RESOURCE_EXHAUSTED') throw new QuotaError(msg);
-    if (res.status === 403) throw new Error('This key can’t use the Gemini API. Create a new key at aistudio.google.com/apikey and save it in Settings.');
-    if (res.status === 404) throw new QuotaError('model not found');   // try the other model
-    if (res.status >= 500) throw new Error('Gemini is busy right now. Try again in a moment.');
-    throw new Error(`Gemini returned an error (${res.status})${msg ? ': ' + msg : ''}.`);
+    const m = (data && data.error && data.error.message) || '';
+    if (res.status === 400 && gen.thinkingConfig && /thinking/i.test(m)) return geminiCall(c, list, b64, hint, modelKey, false);
+    throw geminiHttpError(res, data);
   }
-  if (data && data.promptFeedback && data.promptFeedback.blockReason) throw new Error('Gemini wouldn’t analyse this photo. Try another one.');
+  if (data && data.promptFeedback && data.promptFeedback.blockReason) throw aiErr('Gemini wouldn’t analyse this photo. Try another one.', 'Blocked: ' + data.promptFeedback.blockReason);
   const cand = data && data.candidates && data.candidates[0];
   const text = cand && cand.content && Array.isArray(cand.content.parts) ? cand.content.parts.filter(p => typeof p.text === 'string' && !p.thought).map(p => p.text).join('') : '';
-  if (!text) throw new Error(cand && cand.finishReason === 'SAFETY' ? 'Gemini wouldn’t analyse this photo. Try another one.' : 'Gemini’s answer was empty. Try again.');
+  if (!text) throw aiErr(cand && cand.finishReason === 'SAFETY' ? 'Gemini wouldn’t analyse this photo. Try another one.' : 'Gemini’s answer was empty. Try again.', cand && cand.finishReason ? 'finishReason: ' + cand.finishReason : '');
   try { return JSON.parse(text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')); }
-  catch (e) { throw new Error('Gemini’s answer couldn’t be read. Try again.'); }
+  catch (e) { throw aiErr('Gemini’s answer couldn’t be read. Try again.', text.slice(0, 120)); }
 }
 async function aiAnalyze(b64, hint) {
   const c = aiCfg();
   const list = allFoods();
-  let raw, extraNote = '';
+  let raw, extraNote = '', lastErr = null;
   if (c.provider === 'gemini') {
     const order = c.gmodel === 'cheap' ? ['cheap'] : ['best', 'cheap'];
     for (let i = 0; i < order.length; i++) {
-      try { raw = await geminiCall(c, list, b64, hint, order[i]); if (i > 0) extraNote = 'Used Flash-Lite because the free daily limit for Flash was reached.'; break; }
+      try { raw = await geminiCall(c, list, b64, hint, order[i]); if (i > 0) extraNote = lastErr instanceof QuotaError ? 'Used Flash-Lite because the free daily limit for Flash was reached.' : 'Used Flash-Lite because Flash didn’t answer.'; break; }
       catch (e) {
-        if (!(e instanceof QuotaError)) throw e;
+        lastErr = e;
+        const canFallBack = e instanceof QuotaError || e instanceof NetError;
+        if (!canFallBack) throw e;
         if (i === order.length - 1) {
+          if (e instanceof NetError) throw aiErr('Couldn’t connect to Gemini. If your internet works, Google may be refusing the key in a way the phone can’t show. Tap Test key below to check it.', e.detail);
           const t = geminiResetTime();
-          throw new Error(`You’ve used Google’s free photo limit for today${t ? `. It resets at ${t}` : ''}. You can still log food with search or quick add.`);
+          throw aiErr(`You’ve used Google’s free photo limit for today${t ? `. It resets at ${t}` : ''}. You can still log food with search or quick add.`, e.detail);
         }
       }
     }
   } else {
-    raw = await claudeCall(c, list, b64, hint);
+    try { raw = await claudeCall(c, list, b64, hint); }
+    catch (e) { if (e instanceof NetError) throw aiErr('Couldn’t connect to Claude. Check your internet, then tap Test key below.', e.detail); throw e; }
   }
   if (!raw || !Array.isArray(raw.items)) throw new Error(`${aiName()}’s answer couldn’t be read. Try again.`);
   const n = v => (typeof v === 'number' && isFinite(v) ? v : Number(v) || 0);
@@ -1270,9 +1310,11 @@ function photoHTML(f) {
       <p class="small muted" style="margin:12px 2px 0">Works best from above, with the whole plate in view and good light. You can also snap a nutrition label.</p>`;
   }
   const img = ph.dataUrl ? `<img class="photo-prev" src="${ph.dataUrl}" alt="Your food photo">` : '';
-  if (ph.state === 'loading') return `${img}<div class="ai-wait" role="status"><span class="spin" aria-hidden="true"></span>${aiName()} is looking at your food…</div>`;
-  if (ph.state === 'error') return `${img}<div class="card mt" role="alert"><p style="margin:0">${esc(ph.error)}</p></div>
-      <div class="grid2 mt"><button class="btn ghost" data-a="photoReset">New photo</button><button class="btn primary" data-a="photoRetry">Try again</button></div>`;
+  if (ph.state === 'loading') return `${img}<div class="ai-wait" role="status"><span class="spin" aria-hidden="true"></span>${aiName()} is looking at your food… <span data-aielapsed="${ph.started || Date.now()}">0 s</span></div>
+      <p class="small muted hidden" data-aislow style="text-align:center;margin:0">This can take up to half a minute. Keep Plates open.</p>`;
+  if (ph.state === 'error') return `${img}<div class="card mt" role="alert"><p style="margin:0">${esc(ph.error)}</p>${ph.detail ? `<p class="small muted" style="margin:8px 0 0;word-break:break-word">Details: ${esc(ph.detail)}</p>` : ''}</div>
+      <div class="grid2 mt"><button class="btn ghost" data-a="photoReset">New photo</button><button class="btn primary" data-a="photoRetry">Try again</button></div>
+      <div class="mt">${aiTestHTML()}<p class="small" data-aitest style="margin:8px 2px 0" aria-live="polite"></p></div>`;
   // review
   const items = ph.items || [];
   const rows = items.map((it, i) => {
@@ -1306,21 +1348,21 @@ async function runPhoto(file) {
   f.mode = 'photo';
   try {
     const img = await prepImage(file);
-    f.photo = { state: 'loading', dataUrl: img.dataUrl, b64: img.b64, hint: '' };
+    f.photo = { state: 'loading', dataUrl: img.dataUrl, b64: img.b64, hint: '', started: Date.now() };
   } catch (e) { f.photo = { state: 'error', error: e.message }; renderFood(); return; }
   renderFood();
   await analyzeCurrent();
 }
 async function analyzeCurrent() {
   const f = ui.food; if (!f || !f.photo || !f.photo.b64) return;
-  const ph = f.photo; ph.state = 'loading'; renderFood();
+  const ph = f.photo; ph.state = 'loading'; ph.started = Date.now(); renderFood();
   try {
     const r = await aiAnalyze(ph.b64, ph.hint);
     if (ui.food !== f) return;                 // sheet was closed meanwhile
     Object.assign(ph, { state: 'review', items: r.items, note: r.note });
   } catch (e) {
     if (ui.food !== f) return;
-    Object.assign(ph, { state: 'error', error: e.message });
+    Object.assign(ph, { state: 'error', error: e.message, detail: e.detail || '' });
   }
   renderFood();
 }
@@ -1438,6 +1480,7 @@ function beep() {
   if (navigator.vibrate) navigator.vibrate([120, 80, 120]);
 }
 function tick() {
+  $$('[data-aielapsed]').forEach(el => { const s2 = Math.floor((Date.now() - Number(el.dataset.aielapsed)) / 1000); el.textContent = s2 + ' s'; const slow = $('[data-aislow]'); if (slow && s2 >= 12) slow.classList.remove('hidden'); });
   const a = S.active;
   if (a) {
     $$('[data-tick=elapsed]').forEach(el => { el.textContent = dur(Date.now() - a.start); });
@@ -1635,6 +1678,13 @@ const A = {
     closeSheet(); render();
     toast(`Added ${added.length} item${added.length === 1 ? '' : 's'} to ${MEALS[f.meal].toLowerCase()}`, { undo: () => { S.food[date] = S.food[date].filter(x => !ids.has(x.id)); save(); render(); } });
     setTimeout(() => maybeCoach('food'), 1200);
+  },
+  aiTest: async el => {
+    const out = el.parentElement.querySelector('[data-aitest]');
+    el.disabled = true; if (out) out.textContent = 'Checking…';
+    const r = await aiTest();
+    el.disabled = false;
+    if (out) { out.innerHTML = `<span style="color:${r.ok ? 'var(--green)' : 'var(--red)'};font-weight:600">${esc(r.text)}</span>${r.detail ? `<br><span class="muted" style="word-break:break-word">Details: ${esc(r.detail)}</span>` : ''}`; }
   },
   aiProvider: el => { const c = aiCfg(); c.provider = el.dataset.v; saveAi(c); refreshAiSetup(el.dataset.where); },
   aiModel: el => {
