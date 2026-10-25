@@ -1,7 +1,7 @@
 /* Plates service worker: network first (so updates show up straight away), cache as offline fallback */
-const CACHE = 'plates-1.2.0';
+const CACHE = 'plates-1.2.1';
 const SHELL = [
-  './', 'index.html', 'app.js?v=1.2.0', 'data.js?v=1.2.0', 'manifest.webmanifest',
+  './', 'index.html', 'app.js?v=1.2.1', 'data.js?v=1.2.1', 'manifest.webmanifest',
   'icon-180.png', 'icon-192.png', 'icon-512.png',
   'big-shoulders-display-latin-wght-normal.woff2', 'big-shoulders-display-latin-ext-wght-normal.woff2'
 ];

@@ -1,7 +1,7 @@
 /* Plates — gym + meal tracker with a coach. Single-user, data stays on the phone. */
 'use strict';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.1';
 const STORE_KEY = 'plates.v1';
 
 /* ---------- Error banner: show any crash instead of failing silently ---------- */
@@ -1052,7 +1052,7 @@ function aiSetupHTML(where) {
       <ol class="small muted" style="margin:8px 0 0;padding-left:20px;line-height:1.55">
         <li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--blue)">aistudio.google.com/apikey</a> and sign in with your Google account.</li>
         <li>Accept the terms if asked, then tap <b>Create API key</b>.</li>
-        <li>Copy the key. It starts with <b>AIza</b>.</li>
+        <li>Copy the key. New keys start with <b>AQ.</b> and older ones with <b>AIza</b>. Both work.</li>
         <li>Paste it below.</li>
       </ol>`
     : `<p style="margin:0 0 6px">Plates uses <b>Claude</b>, Anthropic’s AI, to recognise food in photos. It needs your own API key. Each photo costs about 1 US cent on “Most accurate”, and new accounts get a small amount of free credit.</p>
@@ -1066,7 +1066,7 @@ function aiSetupHTML(where) {
     ? 'The key stays on this phone and isn’t included in backups. For users in the EU, Google doesn’t use your photos to improve its products.'
     : 'The key stays on this phone and isn’t included in backups. Anthropic doesn’t use API photos to train its models.';
   return `${provSeg}<div class="card mt">${steps}
-      <label class="field"><span>API key</span><input class="input" id="aikey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${c.provider === 'gemini' ? 'AIza…' : 'sk-ant-…'}"></label>
+      <label class="field"><span>API key</span><input class="input" id="aikey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${c.provider === 'gemini' ? 'AQ.…' : 'sk-ant-…'}"></label>
       <div class="field"><span>Model</span>${models}</div>
       <div class="mt"><button class="btn primary wide" data-a="aiSaveKey" data-where="${where}">Save key</button></div>
       <p class="small muted" style="margin:10px 2px 0">${privacy}</p>
@@ -1646,7 +1646,7 @@ const A = {
     const key = (($('#aikey') || {}).value || '').trim().replace(/\s+/g, '');
     const c = aiCfg();
     if (c.provider === 'gemini') {
-      if (!/^AIza[0-9A-Za-z_\-]{30,}$/.test(key)) { toast('That doesn\u2019t look like a Gemini API key. It starts with AIza'); return; }
+      if (!/^(AIza[0-9A-Za-z_\-]{30,}|AQ\.?[0-9A-Za-z_\-.]{20,})$/.test(key)) { toast('That doesn\u2019t look like a Gemini API key. It starts with AQ. or AIza'); return; }
       c.gkey = key;
     } else {
       if (!/^sk-ant-/.test(key) || key.length < 30) { toast('That doesn\u2019t look like a Claude API key. It starts with sk-ant-'); return; }
