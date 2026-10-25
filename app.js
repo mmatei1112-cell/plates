@@ -1,7 +1,7 @@
 /* Plates — gym + meal tracker with a coach. Single-user, data stays on the phone. */
 'use strict';
 
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.2.0';
 const STORE_KEY = 'plates.v1';
 
 /* ---------- Error banner: show any crash instead of failing silently ---------- */
@@ -73,7 +73,9 @@ const ICON = {
   trophy: I('<path d="M8 4.5h8v4.5a4 4 0 0 1-8 0z"/><path d="M8 6H5v1a3 3 0 0 0 3 3M16 6h3v1a3 3 0 0 1-3 3M12 13v3.5M8.5 20h7M10 16.5h4"/>'),
   trash: I('<path d="M4.5 7h15M10 4h4M6.5 7l1 12.5h9l1-12.5"/>'),
   up: I('<path d="M6 15l6-6 6 6"/>'),
-  down: I('<path d="M6 9l6 6 6-6"/>')
+  down: I('<path d="M6 9l6 6 6-6"/>'),
+  camera: I('<path d="M4 8.5a2 2 0 0 1 2-2h2l1.5-2h5l1.5 2h2a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/>'),
+  image: I('<rect x="4" y="5" width="16" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="M5 17l4.5-4.5 3 3 2.5-2.5 4 4"/>')
 };
 
 /* ---------- Data lookups ---------- */
@@ -82,6 +84,31 @@ let EX_MAP = {};
 function rebuildExMap() { EX_MAP = {}; for (const e of EXERCISES.concat(S.customEx)) EX_MAP[e.id] = e; }
 function ex(id) { return EX_MAP[id] || { id, n: 'Unknown exercise', m: 'abs', s: [], eq: 'other', rr: [8, 12] }; }
 function allFoods() { return FOODS.concat(S.customFoods); }
+/* Romanian name to show under a food, unless the food is already named in Romanian */
+function roLabel(f) { if (!f.ro) return ''; const r = f.ro.split(' / ')[0]; return norm(f.n).includes(norm(r)) ? '' : r; }
+/* Search English and Romanian names, ignoring diacritics; best matches first */
+function searchFoods(query, limit = 50) {
+  const q = norm(query.trim()); if (!q) return [];
+  const toks = q.split(/\s+/);
+  const words = t => t.split(/[^a-z0-9%]+/).filter(Boolean);
+  const allWordStarts = t => { const w = words(t); return toks.every(k => w.some(x => x.startsWith(k))); };
+  const scored = [];
+  for (const f of allFoods()) {
+    const n = norm(f.n), names = (f.ro ? norm(f.ro).split(' / ') : []), hay = [n, ...names].join(' / ');
+    if (!toks.every(t => hay.includes(t))) continue;
+    let score;
+    if (n === q || names.includes(q)) score = -1;                      // exact name, e.g. "ou", "cafea"
+    else if (n.startsWith(q)) score = 0;                                // name starts with the search
+    else if (names.some(x => x.startsWith(q))) score = 0.5;             // Romanian name starts with it
+    else if (allWordStarts(n) || names.some(allWordStarts)) score = 1;  // every word matches one name, e.g. "piept pui"
+    else if (hay.includes(q)) score = 1.5;
+    else score = words(hay).some(w => w.startsWith(toks[0])) ? 2 : 3;
+    if (f.custom) score -= 0.25;
+    scored.push([score, f.n.length, f]);
+  }
+  return scored.sort((a, b) => a[0] - b[0] || a[1] - b[1]).slice(0, limit).map(x => x[2]);
+}
+
 function foodById(id) { return allFoods().find(f => f.id === id); }
 
 /* ---------- State ---------- */
@@ -489,8 +516,9 @@ function viewToday() {
     <h2 class="h-sec">Training</h2>
     ${trainCard()}
     <div class="quick">
-      <button class="qt" data-a="water" data-ml="250"><span style="color:var(--water)">${ICON.drop}</span>Add 250 ml water</button>
+      <button class="qt" data-a="water" data-ml="250"><span style="color:var(--water)">${ICON.drop}</span>+250 ml water</button>
       <button class="qt" data-a="openFood"><span style="color:var(--blue)">${ICON.fork}</span>Log food</button>
+      <button class="qt" data-a="snap"><span style="color:var(--red)">${ICON.camera}</span>Snap a meal</button>
       <button class="qt" data-a="weightSheet"><span style="color:var(--green)">${ICON.scale}</span>Log weight</button>
     </div>
     ${weekStrip()}
@@ -624,7 +652,7 @@ function viewEat() {
       <div class="group">${list.map(e => `<button class="row food-r" data-a="editEntry" data-id="${e.id}">
           <div class="grow"><div class="title">${esc(e.name)}</div><div class="meta">${e.g ? fmtInt(e.g) + ' g, ' : ''}P ${fmtInt(e.p)} g, C ${fmtInt(e.c)} g, F ${fmtInt(e.f)} g</div></div>
           <div class="end"><span class="k">${fmtInt(e.k)}</span> <span class="small muted">kcal</span></div></button>`).join('')}
-        <button class="row add-row" data-a="openFood" data-meal="${m}">${ICON.plus}<span>Add food</span></button></div>`;
+        <div class="row add-split"><button class="add-row" data-a="openFood" data-meal="${m}">${ICON.plus}<span>Add food</span></button><button class="icon-btn" data-a="snap" data-meal="${m}" aria-label="Snap a photo for ${name.toLowerCase()}" style="color:var(--red)">${ICON.camera}</button></div></div>`;
   }).join('');
   return `<div class="screen">
     <header class="top"><h1 class="h-title">Eat</h1>${themeBtn()}</header>
@@ -874,6 +902,8 @@ function settingsSheet() {
     <div class="seg" role="group">${[['often', 'Often'], ['sometimes', 'Sometimes'], ['off', 'Off']].map(([v, l]) => `<button data-a="tipFreq" data-v="${v}" aria-pressed="${S.settings.tips === v}">${l}</button>`).join('')}</div>
     <div class="sub-h">Dark mode</div>
     <div class="seg" role="group">${[['auto', 'Match phone'], ['light', 'Off'], ['dark', 'On']].map(([v, l]) => `<button data-a="theme" data-v="${v}" aria-pressed="${S.settings.theme === v}">${l}</button>`).join('')}</div>
+    <div class="sub-h">Photo logging</div>
+    <div data-aisetup>${aiSetupHTML('settings')}</div>
     <div class="sub-h">Your data</div>
     <div class="group">
       <button class="row" data-a="exportData"><div class="grow"><div class="title">Save a backup</div><div class="meta">Download all workouts, meals and settings as a file</div></div></button>
@@ -914,29 +944,29 @@ function openFood(meal, date) {
 }
 function foodResultsHTML() {
   const f = ui.food, q = norm(f.q.trim());
-  const item = (food, g) => `<button class="row" data-a="pickFood" data-id="${food.id}" ${g ? `data-g="${g}"` : ''}><div class="grow"><div class="title">${esc(food.n)}</div><div class="meta">${g ? `${fmtInt(g)} g last time, ` : ''}${fmtInt(food.k)} kcal, P ${fmt1(food.p)} g per 100 g</div></div><span class="muted">${ICON.plus.replace('<svg', '<svg style="width:20px;height:20px"')}</span></button>`;
+  const item = (food, g) => `<button class="row" data-a="pickFood" data-id="${food.id}" ${g ? `data-g="${g}"` : ''}><div class="grow"><div class="title">${esc(food.n)}</div><div class="meta">${roLabel(food) ? `${esc(roLabel(food))}, ` : ''}${g ? `${fmtInt(g)} g last time, ` : ''}${fmtInt(food.k)} kcal, P ${fmt1(food.p)} g per 100 g</div></div><span class="muted">${ICON.plus.replace('<svg', '<svg style="width:20px;height:20px"')}</span></button>`;
   if (!q) {
     const rec = recentFoods();
     const picks = DEFAULT_FOOD_PICKS.map(n => FOODS.find(x => x.n === n)).filter(Boolean);
     return `${rec.length ? `<div class="sub-h">Recent</div><div class="group">${rec.map(r => item(r.food, r.g)).join('')}</div>` : ''}
       <div class="sub-h">High-protein picks</div><div class="group">${picks.map(p => item(p)).join('')}</div>`;
   }
-  const toks = q.split(/\s+/);
-  const res = allFoods().filter(x => { const n = norm(x.n); return toks.every(t => n.includes(t)); })
-    .sort((a, b) => norm(a.n).indexOf(toks[0]) - norm(b.n).indexOf(toks[0])).slice(0, 40);
+  const res = searchFoods(f.q);
   return `${res.length ? `<div class="group mt">${res.map(r => item(r)).join('')}</div>` : `<div class="group mt"><div class="empty">No match for “${esc(f.q)}”.</div></div>`}
     <div class="mt"><button class="btn ghost wide" data-a="foodMode" data-v="new">${ICON.plus} Create “${esc(f.q.trim())}” as a new food</button></div>`;
 }
 function mealSeg(cur) { return `<div class="seg" role="group" aria-label="Meal">${Object.entries(MEALS).map(([v, l]) => `<button data-a="foodMeal" data-v="${v}" aria-pressed="${cur === v}">${l}</button>`).join('')}</div>`; }
 function renderFood() {
   const f = ui.food; if (!f) return;
-  const title = f.editId ? 'Edit entry' : `Add to ${MEALS[f.meal].toLowerCase()}`;
+  const title = f.editId ? 'Edit entry' : f.mode === 'photo' ? 'Snap a meal' : `Add to ${MEALS[f.meal].toLowerCase()}`;
   let body = '';
-  if (f.mode === 'portion' && f.food) {
+  if (f.mode === 'photo') {
+    body = `<div class="seg mt" role="group">${modeBtns(f)}</div>${photoHTML(f)}`;
+  } else if (f.mode === 'portion' && f.food) {
     const food = f.food, m = portion(food, f.g || 0);
     const servings = [['100 g', 100], ...(food.sv || [])];
     body = `${f.editId ? '' : `<button class="btn text" data-a="foodMode" data-v="search" style="margin-left:-8px">${ICON.left} Back</button>`}
-      <h3 style="margin:4px 2px 2px;font-size:20px">${esc(food.n)}</h3>
+      <h3 style="margin:4px 2px 2px;font-size:20px">${esc(food.n)}</h3>${roLabel(food) ? `<div class="small muted" style="margin:0 2px 2px">${esc(roLabel(food))}</div>` : ''}
       <div class="small muted" style="margin:0 2px">Per 100 g: ${fmtInt(food.k)} kcal, P ${fmt1(food.p)}, C ${fmt1(food.c)}, F ${fmt1(food.f)} g</div>
       <div class="chips mt">${servings.map(([l, g]) => `<button class="chip" data-a="foodServ" data-g="${g}" aria-pressed="${Number(f.g) === g}">${esc(l)}${l.endsWith(' g') ? '' : ` (${g} g)`}</button>`).join('')}</div>
       <label class="field"><span>Amount, grams</span><input class="input" id="fgrams" inputmode="decimal" value="${f.g ?? ''}" enterkeyhint="done" style="font-size:22px;font-weight:700"></label>
@@ -967,14 +997,332 @@ function renderFood() {
       <div class="sticky-foot"><button class="btn primary wide big" data-a="saveNewFood">Save food</button></div>`;
   } else {
     body = `<div class="seg mt" role="group">${modeBtns(f)}</div>
-      <div class="search mt">${ICON.search}<input class="input" id="fq" type="search" placeholder="Search foods, e.g. chicken, branza" value="${esc(f.q)}" autocomplete="off" enterkeyhint="search"></div>
+      <div class="search mt">${ICON.search}<input class="input" id="fq" type="search" placeholder="Search in English or Romanian" value="${esc(f.q)}" autocomplete="off" enterkeyhint="search"></div>
       <div id="fres">${foodResultsHTML()}</div>`;
   }
   setSheet(sheetHead(title) + body);
 }
-function modeBtns(f) { return [['search', 'Search'], ['quick', 'Quick add'], ['new', 'New food']].map(([v, l]) => `<button data-a="foodMode" data-v="${v}" aria-pressed="${f.mode === v}">${l}</button>`).join(''); }
+function modeBtns(f) { return [['search', 'Search'], ['photo', 'Photo'], ['quick', 'Quick add'], ['new', 'New food']].map(([v, l]) => `<button data-a="foodMode" data-v="${v}" aria-pressed="${f.mode === v}">${l}</button>`).join(''); }
 function macroBoxes(m) {
   return `<div class="pm kc"><div class="v">${fmtInt(m.k)}</div><div class="l">kcal</div></div><div class="pm pr"><div class="v">${fmt1(m.p)}</div><div class="l">protein</div></div><div class="pm cb"><div class="v">${fmt1(m.c)}</div><div class="l">carbs</div></div><div class="pm ft"><div class="v">${fmt1(m.f)}</div><div class="l">fat</div></div>`;
+}
+
+/* ----- Photo logging: Google Gemini (free tier) or Claude, called straight from the phone with the user's own key ----- */
+const AI_KEY = 'plates.ai';           // kept apart from the main data so backups never contain a key
+const PROVIDERS = {
+  gemini: {
+    name: 'Gemini', seg: 'Gemini (free)',
+    models: {
+      best: { id: 'gemini-3.8-flash', label: 'Flash', cost: 'Free, about 20 photos a day. Plates switches to Flash-Lite if you go over.' },
+      cheap: { id: 'gemini-3.5-flash-lite', label: 'Flash-Lite', cost: 'Free, hundreds of photos a day, a little less accurate.' }
+    }
+  },
+  claude: {
+    name: 'Claude', seg: 'Claude (paid)',
+    models: {
+      best: { id: 'claude-sonnet-5-5', label: 'Most accurate', cost: 'About 1 US cent per photo.' },
+      cheap: { id: 'claude-haiku-5-5', label: 'Cheapest', cost: 'About 0.05 US cents per photo.' }
+    }
+  }
+};
+function aiCfg() {
+  let c = {}; try { c = JSON.parse(localStorage.getItem(AI_KEY) || '{}') || {}; } catch (e) { c = {}; }
+  // Someone who already saved a Claude key keeps Claude; everyone else starts on Gemini
+  return { provider: c.provider || (c.key ? 'claude' : 'gemini'), key: '', gkey: '', model: 'best', gmodel: 'best', ...c, ...(c.provider ? {} : { provider: c.key ? 'claude' : 'gemini' }) };
+}
+function saveAi(c) { try { localStorage.setItem(AI_KEY, JSON.stringify(c)); } catch (e) { toast('Couldn’t save the key on this phone.'); } }
+const aiKeyOf = c => c.provider === 'gemini' ? c.gkey : c.key;
+const aiModelOf = c => c.provider === 'gemini' ? c.gmodel : c.model;
+const hasAiKey = () => !!aiKeyOf(aiCfg());
+const aiName = () => PROVIDERS[aiCfg().provider].name;
+
+function aiSetupHTML(where) {
+  const c = aiCfg(), P = PROVIDERS[c.provider], mk = aiModelOf(c);
+  const provSeg = `<div class="seg" role="group" aria-label="AI service">${Object.entries(PROVIDERS).map(([v, p]) => `<button data-a="aiProvider" data-v="${v}" data-where="${where}" aria-pressed="${c.provider === v}">${p.seg}</button>`).join('')}</div>`;
+  const models = `<div class="seg" role="group" aria-label="Photo accuracy">${Object.entries(P.models).map(([v, m]) => `<button data-a="aiModel" data-v="${v}" aria-pressed="${mk === v}">${m.label}</button>`).join('')}</div>
+    <p class="small muted" style="margin:6px 2px 0" data-aicost>${P.models[mk].cost}</p>`;
+  const key = aiKeyOf(c);
+  if (key) {
+    return `${provSeg}<div class="group mt"><div class="row"><div class="grow"><div class="title">${P.name} key saved</div><div class="meta">Ends in …${esc(key.slice(-4))}. Stored only on this phone.</div></div>
+      <button class="btn sm ghost danger" data-a="aiRemoveKey" data-where="${where}">Remove</button></div></div>
+      <div class="field"><span>Model</span>${models}</div>`;
+  }
+  const steps = c.provider === 'gemini'
+    ? `<p style="margin:0 0 6px">Plates uses <b>Google Gemini</b> to recognise food in photos. You need a free API key from Google. No card is needed, and you must be 18 or older.</p>
+      <ol class="small muted" style="margin:8px 0 0;padding-left:20px;line-height:1.55">
+        <li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--blue)">aistudio.google.com/apikey</a> and sign in with your Google account.</li>
+        <li>Accept the terms if asked, then tap <b>Create API key</b>.</li>
+        <li>Copy the key. It starts with <b>AIza</b>.</li>
+        <li>Paste it below.</li>
+      </ol>`
+    : `<p style="margin:0 0 6px">Plates uses <b>Claude</b>, Anthropic’s AI, to recognise food in photos. It needs your own API key. Each photo costs about 1 US cent on “Most accurate”, and new accounts get a small amount of free credit.</p>
+      <ol class="small muted" style="margin:8px 0 0;padding-left:20px;line-height:1.55">
+        <li>Open <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener" style="color:var(--blue)">platform.claude.com/settings/keys</a> and sign up or log in.</li>
+        <li>Add credit under <b>Billing</b> if you have none. You can set a monthly spend limit there too.</li>
+        <li>Tap <b>Create key</b>, choose the <b>Default</b> workspace, and copy the key.</li>
+        <li>Paste it below.</li>
+      </ol>`;
+  const privacy = c.provider === 'gemini'
+    ? 'The key stays on this phone and isn’t included in backups. For users in the EU, Google doesn’t use your photos to improve its products.'
+    : 'The key stays on this phone and isn’t included in backups. Anthropic doesn’t use API photos to train its models.';
+  return `${provSeg}<div class="card mt">${steps}
+      <label class="field"><span>API key</span><input class="input" id="aikey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${c.provider === 'gemini' ? 'AIza…' : 'sk-ant-…'}"></label>
+      <div class="field"><span>Model</span>${models}</div>
+      <div class="mt"><button class="btn primary wide" data-a="aiSaveKey" data-where="${where}">Save key</button></div>
+      <p class="small muted" style="margin:10px 2px 0">${privacy}</p>
+    </div>`;
+}
+function refreshAiSetup(where) {
+  if (where === 'photo' && ui.food && ui.food.mode === 'photo') { renderFood(); return; }
+  const box = $('[data-aisetup]'); if (box) box.innerHTML = aiSetupHTML('settings');
+  if (ui.food && ui.food.mode === 'photo' && where !== 'settings') renderFood();
+}
+
+/* Shrink the photo on the phone before sending: faster, uses less quota, same accuracy for food */
+function prepImage(file) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const max = 1024, sc = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.max(1, Math.round(img.naturalWidth * sc)), h = Math.max(1, Math.round(img.naturalHeight * sc));
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      cv.getContext('2d').drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      const dataUrl = cv.toDataURL('image/jpeg', 0.82);
+      res({ dataUrl, b64: dataUrl.split(',')[1] });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('That file isn’t a photo Plates can read.')); };
+    img.src = url;
+  });
+}
+
+const AI_FIELDS = {
+  name: 'Short English name, e.g. "Sarmale" or "Grilled chicken breast"',
+  name_ro: 'Romanian name',
+  match: 'Number of the closest FOOD LIST entry for the same food, or -1 if none fits',
+  grams: 'Estimated edible amount shown, in grams (1 ml of drink = 1 g)'
+};
+const AI_TOOL = {
+  name: 'log_foods',
+  description: 'Record every food and drink identified in the photo.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      items: { type: 'array', items: { type: 'object', properties: {
+        name: { type: 'string', description: AI_FIELDS.name }, name_ro: { type: 'string', description: AI_FIELDS.name_ro },
+        match: { type: 'integer', description: AI_FIELDS.match }, grams: { type: 'number', description: AI_FIELDS.grams },
+        kcal_100g: { type: 'number' }, protein_100g: { type: 'number' }, carbs_100g: { type: 'number' }, fat_100g: { type: 'number' },
+        confidence: { type: 'string', enum: ['high', 'medium', 'low'] }
+      }, required: ['name', 'match', 'grams', 'kcal_100g', 'protein_100g', 'carbs_100g', 'fat_100g', 'confidence'] } },
+      note: { type: 'string', description: 'One short plain sentence for the user, e.g. the portion size assumed, or why no food was found' }
+    },
+    required: ['items', 'note']
+  }
+};
+/* Same shape for Gemini, in its schema dialect */
+const GEMINI_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    items: { type: 'ARRAY', items: { type: 'OBJECT', properties: {
+      name: { type: 'STRING', description: AI_FIELDS.name }, name_ro: { type: 'STRING', description: AI_FIELDS.name_ro },
+      match: { type: 'INTEGER', description: AI_FIELDS.match }, grams: { type: 'NUMBER', description: AI_FIELDS.grams },
+      kcal_100g: { type: 'NUMBER' }, protein_100g: { type: 'NUMBER' }, carbs_100g: { type: 'NUMBER' }, fat_100g: { type: 'NUMBER' },
+      confidence: { type: 'STRING', enum: ['high', 'medium', 'low'] }
+    }, required: ['name', 'name_ro', 'match', 'grams', 'kcal_100g', 'protein_100g', 'carbs_100g', 'fat_100g', 'confidence'],
+      propertyOrdering: ['name', 'name_ro', 'match', 'grams', 'kcal_100g', 'protein_100g', 'carbs_100g', 'fat_100g', 'confidence'] } },
+    note: { type: 'STRING', description: 'One short plain sentence for the user, e.g. the portion size assumed, or why no food was found' }
+  },
+  required: ['items', 'note'], propertyOrdering: ['items', 'note']
+};
+function aiSystem(list, provider) {
+  return `You look at a photo of food and estimate what is in it for a calorie-tracking app. The user lives in Romania, so expect Romanian dishes as well as international food and supermarket products.
+${provider === 'gemini' ? 'Answer only with JSON that matches the response schema.' : 'Call the log_foods tool exactly once.'}
+- One item per separate food or drink the person will eat. Split a plate into its parts when they are visibly separate (for example sarmale, mămăligă and smântână). Treat mixed dishes such as soup, stew or pasta with sauce as one item.
+- grams: your best estimate of the edible amount shown, not the plate or packaging. Use size cues such as dinner plates (about 26 cm), cutlery, hands, glasses and cans.
+- match: the number of the FOOD LIST entry that is the same food prepared roughly the same way, otherwise -1.
+- Per-100 g values: your best estimate for the food as shown. If a nutrition label is visible, copy its per-100 g values.
+- confidence: how sure you are about both what it is and how much.
+- note: one short sentence, such as the portion size you assumed. If the photo has no food or drink, return no items and say so in the note.
+FOOD LIST:
+${list.map((f, i) => `${i}: ${f.n}${roLabel(f) ? ` (${roLabel(f)})` : ''}`).join('\n')}`;
+}
+/* When Google's free daily quota resets (midnight Pacific time), in the phone's own time zone */
+function geminiResetTime() {
+  try {
+    const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', hourCycle: 'h23' });
+    const d = new Date(); d.setMinutes(0, 0, 0);
+    for (let i = 1; i <= 26; i++) { const t = new Date(d.getTime() + i * 3600e3); if (Number(fmt.format(t)) === 0) return t.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); }
+  } catch (e) { /* fall through */ }
+  return null;
+}
+async function aiFetch(url, opts) {
+  const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 60000);
+  try { return await fetch(url, { ...opts, signal: ctrl.signal }); }
+  catch (e) {
+    if (e.name === 'AbortError') throw new Error(`${aiName()} took too long to answer. Try again.`);
+    throw new Error(navigator.onLine === false ? 'You’re offline. Photo logging needs an internet connection.' : `Couldn’t reach ${aiName()}. Check your connection and try again.`);
+  } finally { clearTimeout(timer); }
+}
+async function claudeCall(c, list, b64, hint) {
+  const res = await aiFetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': c.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+    body: JSON.stringify({
+      model: PROVIDERS.claude.models[c.model].id, max_tokens: 1500,
+      system: aiSystem(list, 'claude'),
+      tools: [AI_TOOL], tool_choice: { type: 'tool', name: 'log_foods' },
+      messages: [{ role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
+        { type: 'text', text: 'What food is in this photo, and how much?' + (hint ? `\nDetails from me: ${hint}` : '') }
+      ] }]
+    })
+  });
+  let data = null; try { data = await res.json(); } catch (e) { /* not JSON */ }
+  if (!res.ok) {
+    const msg = (data && data.error && data.error.message) || '';
+    if (res.status === 401) throw new Error('Claude didn’t accept your API key. It may have expired or been mistyped. Add a new one in Settings, under Photo logging.');
+    if (/workspace/i.test(msg)) throw new Error('This key isn’t linked to a workspace. Create a new key, choose the Default workspace, and save it in Settings.');
+    if (/credit balance/i.test(msg)) throw new Error('Your Anthropic account is out of credit. Add credit in the Claude Console under Billing.');
+    if (res.status === 403) throw new Error('This key isn’t allowed to use Claude. Check its permissions in the Claude Console.');
+    if (res.status === 404 || (/model/i.test(msg) && res.status === 400)) throw new Error('That AI model isn’t available on your account. Switch the model in Settings and try again.');
+    if (res.status === 429) throw new Error('Too many photos in a short time. Wait a minute and try again.');
+    if (res.status >= 500) throw new Error('Claude is busy right now. Try again in a moment.');
+    throw new Error(`Claude returned an error (${res.status})${msg ? ': ' + msg : ''}.`);
+  }
+  const block = data && Array.isArray(data.content) && data.content.find(b => b.type === 'tool_use');
+  if (!block || !block.input) throw new Error('Claude’s answer couldn’t be read. Try again.');
+  return block.input;
+}
+class QuotaError extends Error {}
+async function geminiCall(c, list, b64, hint, modelKey) {
+  const model = PROVIDERS.gemini.models[modelKey].id;
+  const res = await aiFetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-goog-api-key': c.gkey },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: aiSystem(list, 'gemini') }] },
+      contents: [{ role: 'user', parts: [
+        { inlineData: { mimeType: 'image/jpeg', data: b64 } },
+        { text: 'What food is in this photo, and how much?' + (hint ? `\nDetails from me: ${hint}` : '') }
+      ] }],
+      generationConfig: { responseMimeType: 'application/json', responseSchema: GEMINI_SCHEMA, temperature: 0.2 }
+    })
+  });
+  let data = null; try { data = await res.json(); } catch (e) { /* not JSON */ }
+  if (!res.ok) {
+    const err = (data && data.error) || {}, msg = err.message || '', st = err.status || '';
+    const reasons = JSON.stringify(err.details || []);
+    if (/API_KEY_INVALID|API key not valid|API key expired/i.test(msg + reasons)) throw new Error('Google didn’t accept your Gemini API key. It may have been mistyped or deleted. Add a new one in Settings, under Photo logging.');
+    if (/location is not supported/i.test(msg)) throw new Error('Google doesn’t offer the Gemini API where you are right now.');
+    if (res.status === 429 || st === 'RESOURCE_EXHAUSTED') throw new QuotaError(msg);
+    if (res.status === 403) throw new Error('This key can’t use the Gemini API. Create a new key at aistudio.google.com/apikey and save it in Settings.');
+    if (res.status === 404) throw new QuotaError('model not found');   // try the other model
+    if (res.status >= 500) throw new Error('Gemini is busy right now. Try again in a moment.');
+    throw new Error(`Gemini returned an error (${res.status})${msg ? ': ' + msg : ''}.`);
+  }
+  if (data && data.promptFeedback && data.promptFeedback.blockReason) throw new Error('Gemini wouldn’t analyse this photo. Try another one.');
+  const cand = data && data.candidates && data.candidates[0];
+  const text = cand && cand.content && Array.isArray(cand.content.parts) ? cand.content.parts.filter(p => typeof p.text === 'string' && !p.thought).map(p => p.text).join('') : '';
+  if (!text) throw new Error(cand && cand.finishReason === 'SAFETY' ? 'Gemini wouldn’t analyse this photo. Try another one.' : 'Gemini’s answer was empty. Try again.');
+  try { return JSON.parse(text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')); }
+  catch (e) { throw new Error('Gemini’s answer couldn’t be read. Try again.'); }
+}
+async function aiAnalyze(b64, hint) {
+  const c = aiCfg();
+  const list = allFoods();
+  let raw, extraNote = '';
+  if (c.provider === 'gemini') {
+    const order = c.gmodel === 'cheap' ? ['cheap'] : ['best', 'cheap'];
+    for (let i = 0; i < order.length; i++) {
+      try { raw = await geminiCall(c, list, b64, hint, order[i]); if (i > 0) extraNote = 'Used Flash-Lite because the free daily limit for Flash was reached.'; break; }
+      catch (e) {
+        if (!(e instanceof QuotaError)) throw e;
+        if (i === order.length - 1) {
+          const t = geminiResetTime();
+          throw new Error(`You’ve used Google’s free photo limit for today${t ? `. It resets at ${t}` : ''}. You can still log food with search or quick add.`);
+        }
+      }
+    }
+  } else {
+    raw = await claudeCall(c, list, b64, hint);
+  }
+  if (!raw || !Array.isArray(raw.items)) throw new Error(`${aiName()}’s answer couldn’t be read. Try again.`);
+  const n = v => (typeof v === 'number' && isFinite(v) ? v : Number(v) || 0);
+  const items = raw.items.slice(0, 12).map(it => {
+    const mi = Number(it.match);
+    const m = Number.isInteger(mi) && mi >= 0 && mi < list.length ? list[mi] : null;
+    const p100 = m ? { k: m.k, p: m.p, c: m.c, f: m.f } : { k: clamp(n(it.kcal_100g), 0, 900), p: clamp(n(it.protein_100g), 0, 100), c: clamp(n(it.carbs_100g), 0, 100), f: clamp(n(it.fat_100g), 0, 100) };
+    return { on: true, name: m ? m.n : String(it.name || 'Food').slice(0, 60), seen: String(it.name || ''), ro: it.name_ro ? String(it.name_ro).slice(0, 60) : '', food: m, p100, g: Math.round(clamp(n(it.grams), 1, 3000)), conf: ['high', 'medium', 'low'].includes(it.confidence) ? it.confidence : 'medium' };
+  });
+  const note = [String(raw.note || '').slice(0, 240), extraNote].filter(Boolean).join(' ');
+  return { items, note };
+}
+
+function photoHTML(f) {
+  const ph = f.photo || { state: 'idle' };
+  if (!hasAiKey()) return `<div class="mt">${aiSetupHTML('photo')}</div>`;
+  if (ph.state === 'idle') {
+    return `<div class="photo-pick mt">
+        <button class="btn primary wide big" data-a="photoPick" data-src="cam">${ICON.camera} Take a photo</button>
+        <button class="btn ghost wide big" data-a="photoPick" data-src="lib">${ICON.image} Choose from photos</button>
+      </div>
+      <p class="small muted" style="margin:12px 2px 0">Works best from above, with the whole plate in view and good light. You can also snap a nutrition label.</p>`;
+  }
+  const img = ph.dataUrl ? `<img class="photo-prev" src="${ph.dataUrl}" alt="Your food photo">` : '';
+  if (ph.state === 'loading') return `${img}<div class="ai-wait" role="status"><span class="spin" aria-hidden="true"></span>${aiName()} is looking at your food…</div>`;
+  if (ph.state === 'error') return `${img}<div class="card mt" role="alert"><p style="margin:0">${esc(ph.error)}</p></div>
+      <div class="grid2 mt"><button class="btn ghost" data-a="photoReset">New photo</button><button class="btn primary" data-a="photoRetry">Try again</button></div>`;
+  // review
+  const items = ph.items || [];
+  const rows = items.map((it, i) => {
+    const m = portion(it.p100, it.g || 0);
+    const sub = it.food ? 'From the food list' : 'AI estimate';
+    const sure = it.conf === 'low' ? ', not sure: check it' : '';
+    return `<div class="ai-item ${it.on ? '' : 'off'}">
+        <button class="ai-check ${it.on ? 'on' : ''}" data-a="aiToggle" data-i="${i}" aria-pressed="${it.on}" aria-label="Include ${esc(it.name)}">${ICON.check}</button>
+        <div class="grow"><div class="title">${esc(it.name)}</div><div class="meta">${sub}${sure}${it.ro && !it.food ? `, ${esc(it.ro)}` : ''}</div>
+          <div class="ai-k" data-aik="${i}">${fmtInt(m.k)} kcal, P ${fmt1(m.p)} g</div></div>
+        <label class="ai-g"><input class="input" inputmode="decimal" data-in="aiG" data-i="${i}" value="${it.g}" aria-label="${esc(it.name)} grams"><span>g</span></label>
+      </div>`;
+  }).join('');
+  const t = aiTotals(items);
+  return `${img}
+    ${ph.note ? `<p class="small muted" style="margin:10px 2px 0">${esc(ph.note)}</p>` : ''}
+    ${items.length ? `<div class="group mt">${rows}</div>
+      <div class="portion-macros" id="aitot">${macroBoxes(t)}</div>
+      <div class="field"><span>Meal</span>${mealSeg(f.meal)}</div>`
+      : '<div class="group mt"><div class="empty">No food found in this photo.</div></div>'}
+    <div class="field"><span>Not quite right? Add details and try again</span><div style="display:flex;gap:8px"><input class="input" id="aihint" placeholder="e.g. 2 eggs, milk is 1.5%, ate half" value="${esc(ph.hint || '')}" style="flex:1"><button class="btn ghost" data-a="photoRetry">Retry</button></div></div>
+    ${items.length ? `<div class="sticky-foot"><button class="btn primary wide big" data-a="aiAdd" ${t.n ? '' : 'disabled'}>Add ${t.n} item${t.n === 1 ? '' : 's'} to ${MEALS[f.meal].toLowerCase()}</button></div>` : `<div class="mt"><button class="btn ghost wide" data-a="photoReset">New photo</button></div>`}`;
+}
+function aiTotals(items) {
+  const t = { k: 0, p: 0, c: 0, f: 0, n: 0 };
+  for (const it of items) if (it.on) { const m = portion(it.p100, it.g || 0); t.k += m.k; t.p += m.p; t.c += m.c; t.f += m.f; t.n++; }
+  return t;
+}
+async function runPhoto(file) {
+  const f = ui.food; if (!f) return;
+  f.mode = 'photo';
+  try {
+    const img = await prepImage(file);
+    f.photo = { state: 'loading', dataUrl: img.dataUrl, b64: img.b64, hint: '' };
+  } catch (e) { f.photo = { state: 'error', error: e.message }; renderFood(); return; }
+  renderFood();
+  await analyzeCurrent();
+}
+async function analyzeCurrent() {
+  const f = ui.food; if (!f || !f.photo || !f.photo.b64) return;
+  const ph = f.photo; ph.state = 'loading'; renderFood();
+  try {
+    const r = await aiAnalyze(ph.b64, ph.hint);
+    if (ui.food !== f) return;                 // sheet was closed meanwhile
+    Object.assign(ph, { state: 'review', items: r.items, note: r.note });
+  } catch (e) {
+    if (ui.food !== f) return;
+    Object.assign(ph, { state: 'error', error: e.message });
+  }
+  renderFood();
 }
 
 /* ----- Exercise picker ----- */
@@ -1261,10 +1609,65 @@ const A = {
     S.templates = S.templates.filter(x => x.id !== t.id); save(); closeSheet(); render();
   },
 
+  // Photo logging
+  snap: el => {
+    closeAllSheets();
+    openFood(el.dataset.meal); ui.food.mode = 'photo'; renderFood();
+    if (hasAiKey()) $('#camIn').click();          // straight to the camera, inside the same tap
+  },
+  photoPick: el => { (el.dataset.src === 'cam' ? $('#camIn') : $('#picIn')).click(); },
+  photoReset: () => { if (ui.food) { ui.food.photo = { state: 'idle' }; renderFood(); } },
+  photoRetry: () => { const f = ui.food; if (!f || !f.photo) return; const h = $('#aihint'); if (h) f.photo.hint = h.value.trim().slice(0, 200); if (f.photo.b64) analyzeCurrent(); else A.photoReset(); },
+  aiToggle: el => { const it = ui.food.photo.items[+el.dataset.i]; it.on = !it.on; const h = $('#aihint'); if (h) ui.food.photo.hint = h.value; renderFood(); },
+  aiAdd: () => {
+    const f = ui.food, ph = f.photo, now = Date.now();
+    const added = [];
+    for (const it of ph.items) {
+      if (!it.on || !(it.g > 0)) continue;
+      const m = portion(it.p100, it.g);
+      const e = { id: uid(), meal: f.meal, name: it.name, foodId: it.food ? it.food.id : null, g: r1(it.g), k: m.k, p: m.p, c: m.c, f: m.f, t: now, src: 'photo' };
+      if (!it.food) e.p100 = { ...it.p100 };
+      added.push(e);
+    }
+    if (!added.length) return;
+    (S.food[f.date] = S.food[f.date] || []).push(...added); save();
+    const ids = new Set(added.map(e => e.id)), date = f.date;
+    closeSheet(); render();
+    toast(`Added ${added.length} item${added.length === 1 ? '' : 's'} to ${MEALS[f.meal].toLowerCase()}`, { undo: () => { S.food[date] = S.food[date].filter(x => !ids.has(x.id)); save(); render(); } });
+    setTimeout(() => maybeCoach('food'), 1200);
+  },
+  aiProvider: el => { const c = aiCfg(); c.provider = el.dataset.v; saveAi(c); refreshAiSetup(el.dataset.where); },
+  aiModel: el => {
+    const c = aiCfg(); if (c.provider === 'gemini') c.gmodel = el.dataset.v; else c.model = el.dataset.v; saveAi(c);
+    $$('[data-a=aiModel]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === el.dataset.v)));
+    $$('[data-aicost]').forEach(x => { x.textContent = PROVIDERS[c.provider].models[el.dataset.v].cost; });
+  },
+  aiSaveKey: el => {
+    const key = (($('#aikey') || {}).value || '').trim().replace(/\s+/g, '');
+    const c = aiCfg();
+    if (c.provider === 'gemini') {
+      if (!/^AIza[0-9A-Za-z_\-]{30,}$/.test(key)) { toast('That doesn\u2019t look like a Gemini API key. It starts with AIza'); return; }
+      c.gkey = key;
+    } else {
+      if (!/^sk-ant-/.test(key) || key.length < 30) { toast('That doesn\u2019t look like a Claude API key. It starts with sk-ant-'); return; }
+      c.key = key;
+    }
+    saveAi(c);
+    if (el.dataset.where === 'photo' && ui.food) ui.food.photo = { state: 'idle' };
+    refreshAiSetup(el.dataset.where);
+    toast('Key saved. You can snap a meal now.');
+  },
+  aiRemoveKey: async el => {
+    const where = el.dataset.where;
+    if (!(await confirmBox('Remove the API key?', 'Photo logging will stop working until you add a key again.', 'Remove', true))) return;
+    const c = aiCfg(); if (c.provider === 'gemini') c.gkey = ''; else c.key = ''; saveAi(c);
+    refreshAiSetup(where);
+  },
+
   // Eat
   eatDay: el => { const d = addDays(ui.eatDate, +el.dataset.d); if (d > dkey()) return; ui.eatDate = d; render(); },
-  foodMode: el => { const f = ui.food; const q = $('#fq'); if (q) f.q = q.value; f.mode = el.dataset.v; if (f.mode === 'search') f.food = null; renderFood(); },
-  foodMeal: el => { const f = ui.food; const g = $('#fgrams'); if (g) f.g = num(g.value); if (f.mode === 'quick') f.quick = readQuick(); f.meal = el.dataset.v; renderFood(); },
+  foodMode: el => { const f = ui.food; const q = $('#fq'); if (q) f.q = q.value; f.mode = el.dataset.v; if (f.mode === 'search') f.food = null; if (f.mode === 'photo' && !f.photo) f.photo = { state: 'idle' }; renderFood(); },
+  foodMeal: el => { const f = ui.food; const g = $('#fgrams'); if (g) f.g = num(g.value); if (f.mode === 'quick') f.quick = readQuick(); if (f.mode === 'photo' && f.photo) { const h = $('#aihint'); if (h) f.photo.hint = h.value; } f.meal = el.dataset.v; renderFood(); },
   pickFood: el => { const f = ui.food; const food = foodById(el.dataset.id); if (!food) return; const q = $('#fq'); if (q) f.q = q.value; f.food = food; f.g = el.dataset.g ? Number(el.dataset.g) : (food.sv && food.sv[0] ? food.sv[0][1] : 100); f.mode = 'portion'; renderFood(); },
   foodServ: el => { ui.food.g = Number(el.dataset.g); renderFood(); },
   addEntry: () => {
@@ -1279,7 +1682,7 @@ const A = {
   },
   editEntry: el => {
     const k = ui.eatDate, e = dayEntries(k).find(x => x.id === el.dataset.id); if (!e) return;
-    const food = e.foodId ? foodById(e.foodId) : null;
+    const food = e.foodId ? foodById(e.foodId) : (e.p100 ? { id: null, n: e.name, k: e.p100.k, p: e.p100.p, c: e.p100.c, f: e.p100.f, sv: [] } : null);
     ui.food = { meal: e.meal, date: k, mode: food ? 'portion' : 'quick', q: '', food, g: e.g, editId: e.id, quick: { name: e.name, k: Math.round(e.k), p: r1(e.p), c: r1(e.c), f: r1(e.f) } };
     openSheet('', { full: true, kind: 'food' }); renderFood();
   },
@@ -1388,6 +1791,11 @@ document.addEventListener('input', e => {
     const g = num(t.value); ui.food.g = isNaN(g) ? null : g;
     $('#fmac').innerHTML = macroBoxes(portion(ui.food.food, g > 0 ? g : 0));
     $$('[data-a=foodServ]').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.g) === g)));
+  } else if (t.dataset.in === 'aiG' && ui.food && ui.food.photo && ui.food.photo.items) {
+    const ph = ui.food.photo, it = ph.items[+t.dataset.i], g = num(t.value);
+    it.g = g > 0 ? Math.min(g, 5000) : 0;
+    const m = portion(it.p100, it.g); const k = $(`[data-aik="${t.dataset.i}"]`); if (k) k.textContent = `${fmtInt(m.k)} kcal, P ${fmt1(m.p)} g`;
+    const tt = aiTotals(ph.items); $('#aitot').innerHTML = macroBoxes(tt);
   } else if (t.dataset.pf) {
     const root = t.closest('.sheet'); readProfileForm(root); updatePreview(root);
   }
@@ -1395,6 +1803,12 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.dataset.pf === 'activity') { const root = t.closest('.sheet'); readProfileForm(root); updatePreview(root); }
+  if ((t.id === 'camIn' || t.id === 'picIn') && t.files && t.files[0]) {
+    const file = t.files[0]; t.value = '';
+    if (!ui.food) openFood();
+    runPhoto(file);
+    return;
+  }
   if (t.id === 'importFile' && t.files && t.files[0]) {
     const file = t.files[0]; const rd = new FileReader();
     rd.onload = async () => {

@@ -14,7 +14,7 @@
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="preload" href="big-shoulders-display-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
-<script>window.SHELL_VERSION = '1.0.1';</script>
+<script>window.SHELL_VERSION = '1.2.0';</script>
 <style>
 @font-face {
   font-family: 'Big Shoulders';
@@ -182,8 +182,8 @@ button.row:active { background: var(--surface-2); }
 .mt { margin-top: 12px; }
 .mt2 { margin-top: 22px; }
 
-.quick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 12px; }
-.qt { background: var(--surface); border-radius: 18px; padding: 14px 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 18px; min-height: 96px; text-align: left; box-shadow: var(--shadow); font-weight: 650; font-size: 15px; line-height: 1.2; }
+.quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+.qt { background: var(--surface); border-radius: 18px; padding: 12px 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 14px; min-height: 92px; text-align: left; box-shadow: var(--shadow); font-weight: 650; font-size: 14px; line-height: 1.2; }
 .qt svg { width: 26px; height: 26px; }
 .qt:active { background: var(--surface-2); }
 
@@ -356,6 +356,27 @@ details.tip p { margin: 0; padding: 0 16px 16px 36px; color: var(--ink-2); font-
 #err button { background: #fff; color: #B3261E; border-radius: 8px; padding: 6px 10px; font-weight: 700; }
 
 .foot-note { text-align: center; color: var(--steel); font-size: 12.5px; margin-top: 24px; line-height: 1.5; }
+/* Photo logging */
+.add-split { padding: 0 6px 0 16px; }
+.add-split .add-row { flex: 1; display: flex; align-items: center; gap: 12px; min-height: 52px; text-align: left; font-weight: 650; color: var(--red); }
+.photo-pick { display: grid; gap: 10px; }
+.photo-prev { display: block; width: 100%; max-height: 160px; object-fit: cover; border-radius: 18px; margin-top: 14px; background: var(--surface-2); }
+.ai-wait { display: flex; align-items: center; gap: 12px; justify-content: center; padding: 22px 0; font-weight: 600; color: var(--ink-2); }
+.spin { width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--surface-2); border-top-color: var(--red); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.ai-item { display: flex; align-items: center; gap: 10px; padding: 12px 12px 12px 10px; }
+.ai-item + .ai-item { border-top: 1px solid var(--line); }
+.ai-item .grow { flex: 1; min-width: 0; }
+.ai-item .title { font-weight: 650; }
+.ai-item .meta { font-size: 12.5px; color: var(--ink-2); }
+.ai-item .ai-k { font-size: 13px; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.ai-item.off .grow, .ai-item.off .ai-g { opacity: .45; }
+.ai-check { width: 32px; height: 32px; border-radius: 10px; background: var(--surface-2); color: transparent; display: grid; place-items: center; flex: none; }
+.ai-check svg { width: 18px; height: 18px; }
+.ai-check.on { background: var(--green); color: #fff; }
+.ai-g { display: flex; align-items: center; gap: 4px; flex: none; }
+.ai-g .input { width: 72px; height: 42px; text-align: center; font-weight: 700; padding: 0 6px; }
+.ai-g span { font-size: 13px; color: var(--ink-2); }
 .hidden { display: none !important; }
 </style>
 </head>
@@ -365,9 +386,11 @@ details.tip p { margin: 0; padding: 0 16px 16px 36px; color: var(--ink-2); font-
   <nav id="tabbar" aria-label="Sections"></nav>
   <div id="sheets"></div>
   <div id="toasts"></div>
+  <input type="file" id="camIn" accept="image/*" capture="environment" class="hidden" aria-hidden="true" tabindex="-1">
+  <input type="file" id="picIn" accept="image/*" class="hidden" aria-hidden="true" tabindex="-1">
   <div id="err" role="alert"><span class="msg"></span><button type="button" onclick="location.reload()">Reload</button></div>
 </div>
-<script src="data.js?v=1.0.1"></script>
-<script src="app.js?v=1.0.1"></script>
+<script src="data.js?v=1.2.0"></script>
+<script src="app.js?v=1.2.0"></script>
 </body>
 </html>
